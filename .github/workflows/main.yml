@@ -47,8 +47,62 @@ jobs:
         timeout-minutes: 4
         run: |
           $desk = "C:\Users\Public\Desktop"
-          Invoke-WebRequest https://dl.gologin.com/gologin.exe -OutFile "$env:TEMP\gologin.exe"
-          Copy-Item "$env:TEMP\gologin.exe" "$desk\gologin-setup.exe" -Force
+          $url = "https://dl.gologin.com/gologin.exe"
+          $out = "$env:TEMP\gologin.exe"
+
+          $maxTries = 3
+          $ok = $false
+          for ($i = 1; $i -le $maxTries; $i++) {
+            Write-Host "----- Download attempt $i/$maxTries -----"
+            try {
+              $wc = New-Object System.Net.WebClient
+              Register-ObjectEvent -InputObject $wc -EventName DownloadProgressChanged -Action {
+                if ($Event.SourceEventArgs.ProgressPercentage % 10 -eq 0) {
+                  Write-Host ("Downloading... {0}% ({1:N1} MB / {2:N1} MB)" -f $Event.SourceEventArgs.ProgressPercentage, ($Event.SourceEventArgs.BytesReceived/1MB), ($Event.SourceEventArgs.TotalBytesToReceive/1MB))
+                }
+              } | Out-Null
+              $task = $wc.DownloadFileTaskAsync($url, $out)
+              while (-not $task.IsCompleted) { Start-Sleep -Milliseconds 500 }
+              Get-EventSubscriber | Unregister-Event
+              if ($task.IsFaulted) { throw $task.Exception }
+            } catch {
+              Write-Host "Download failed: $_"
+              Start-Sleep -Seconds 3
+              continue
+            }
+
+            if (!(Test-Path $out)) {
+              Write-Host "File missing after download, retrying..."
+              continue
+            }
+
+            $size = (Get-Item $out).Length
+            Write-Host ("Downloaded size: {0:N1} MB" -f ($size/1MB))
+            if ($size -lt 1MB) {
+              Write-Host "File too small, likely corrupt/incomplete. Retrying..."
+              Remove-Item $out -Force -ErrorAction SilentlyContinue
+              continue
+            }
+
+            # Verify it's a valid PE/NSIS exe (starts with MZ header)
+            $bytes = [System.IO.File]::ReadAllBytes($out)[0..1]
+            if ($bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
+              Write-Host "Invalid EXE header, file corrupt. Retrying..."
+              Remove-Item $out -Force -ErrorAction SilentlyContinue
+              continue
+            }
+
+            Write-Host "Download verified OK."
+            $ok = $true
+            break
+          }
+
+          if (-not $ok) {
+            Write-Host "Gologin download failed after $maxTries attempts. Skipping install."
+            exit 0
+          }
+
+          Copy-Item $out "$desk\gologin-setup.exe" -Force
           # -Wait nahi: installer app khol ke atak jata hai. 90 sec ka timeout.
           $p = Start-Process "$env:TEMP\gologin.exe" -ArgumentList '/S' -PassThru
           $p | Wait-Process -Timeout 90 -ErrorAction SilentlyContinue
@@ -73,10 +127,12 @@ jobs:
             $w = New-Object -ComObject WScript.Shell
             $full = $w.CreateShortcut("C:\Users\Public\Desktop\Screenshot Full.lnk")
             $full.TargetPath = $sx
-            $full.Arguments = "-PrintScreen"
+            # -FullScreen: no on-screen overlay needed (overlay doesn't render over RDP). Saves + copies to clipboard directly.
+            $full.Arguments = "-FullScreen"
             $full.Save()
             $reg = $w.CreateShortcut("C:\Users\Public\Desktop\Screenshot Select.lnk")
             $reg.TargetPath = $sx
+            # RegionCapture needs an interactive overlay too - same RDP limitation. Keep as fallback only.
             $reg.Arguments = "-RegionCapture"
             $reg.Save()
             Write-Host "Screenshot icons bane (Full + Select)"
