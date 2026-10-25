@@ -41,6 +41,47 @@ jobs:
           Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
           if (!(Get-LocalUser -Name "runneradmin")) { throw "Failed to create user" }
 
+      - name: Install Gologin + desktop icon
+        shell: powershell
+        continue-on-error: true
+        run: |
+          $desk = "C:\Users\Public\Desktop"
+          Invoke-WebRequest https://dl.gologin.com/gologin.exe -OutFile "$env:TEMP\gologin.exe"
+          $sig = Get-AuthenticodeSignature "$env:TEMP\gologin.exe"
+          Write-Host "Gologin signature: $($sig.Status) | $($sig.SignerCertificate.Subject)"
+          Copy-Item "$env:TEMP\gologin.exe" "$desk\gologin-setup.exe" -Force
+          Start-Process "$env:TEMP\gologin.exe" -ArgumentList '/S' -Wait
+          $exe = Get-ChildItem "$env:LOCALAPPDATA\Programs","$env:ProgramFiles","${env:ProgramFiles(x86)}" -Recurse -Filter "GoLogin*.exe" -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch 'uninst|update' } | Select-Object -First 1
+          if ($exe) {
+            $s = (New-Object -ComObject WScript.Shell).CreateShortcut("$desk\Gologin.lnk")
+            $s.TargetPath = $exe.FullName
+            $s.Save()
+            Write-Host "Gologin icon bana: $($exe.FullName)"
+          } else {
+            Write-Host "Silent install nahi hua. RDP me Desktop se gologin-setup.exe chalao."
+          }
+
+      - name: Install Screenshot tool + desktop icons
+        shell: powershell
+        continue-on-error: true
+        run: |
+          choco install sharex -y --no-progress
+          $sx = "$env:ProgramFiles\ShareX\ShareX.exe"
+          if (Test-Path $sx) {
+            $w = New-Object -ComObject WScript.Shell
+            $full = $w.CreateShortcut("C:\Users\Public\Desktop\Screenshot Full.lnk")
+            $full.TargetPath = $sx
+            $full.Arguments = "-PrintScreen"
+            $full.Save()
+            $reg = $w.CreateShortcut("C:\Users\Public\Desktop\Screenshot Select.lnk")
+            $reg.TargetPath = $sx
+            $reg.Arguments = "-RegionCapture"
+            $reg.Save()
+            Write-Host "Screenshot icons bane (Full + Select)"
+          } else {
+            Write-Host "ShareX install nahi hua"
+          }
+
       - name: Start ngrok tunnel and show RDP info
         run: |
           # Start ngrok in background
