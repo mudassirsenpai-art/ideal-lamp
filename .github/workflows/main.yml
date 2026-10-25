@@ -44,13 +44,15 @@ jobs:
       - name: Install Gologin + desktop icon
         shell: powershell
         continue-on-error: true
+        timeout-minutes: 4
         run: |
           $desk = "C:\Users\Public\Desktop"
           Invoke-WebRequest https://dl.gologin.com/gologin.exe -OutFile "$env:TEMP\gologin.exe"
-          $sig = Get-AuthenticodeSignature "$env:TEMP\gologin.exe"
-          Write-Host "Gologin signature: $($sig.Status) | $($sig.SignerCertificate.Subject)"
           Copy-Item "$env:TEMP\gologin.exe" "$desk\gologin-setup.exe" -Force
-          Start-Process "$env:TEMP\gologin.exe" -ArgumentList '/S' -Wait
+          # -Wait nahi: installer app khol ke atak jata hai. 90 sec ka timeout.
+          $p = Start-Process "$env:TEMP\gologin.exe" -ArgumentList '/S' -PassThru
+          $p | Wait-Process -Timeout 90 -ErrorAction SilentlyContinue
+          Get-Process -Name "*gologin*" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           $exe = Get-ChildItem "$env:LOCALAPPDATA\Programs","$env:ProgramFiles","${env:ProgramFiles(x86)}" -Recurse -Filter "GoLogin*.exe" -ErrorAction SilentlyContinue | Where-Object { $_.Name -notmatch 'uninst|update' } | Select-Object -First 1
           if ($exe) {
             $s = (New-Object -ComObject WScript.Shell).CreateShortcut("$desk\Gologin.lnk")
